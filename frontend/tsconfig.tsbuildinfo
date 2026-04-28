@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/context/AuthContext.tsx","./src/lib/supabase.ts","./src/pages/Home.tsx","./src/pages/Login.tsx","./src/pages/Signup.tsx","./src/pages/dashboard/Charity.tsx","./src/pages/dashboard/DashboardLayout.tsx","./src/pages/dashboard/Overview.tsx","./src/pages/dashboard/Scores.tsx"],"errors":true,"version":"5.9.3"}
