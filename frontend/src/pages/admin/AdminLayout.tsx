@@ -1,7 +1,7 @@
 import React from 'react';
 import { NavLink, Outlet, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { LayoutDashboard, Users, Trophy, Heart, LogOut, ArrowLeft } from 'lucide-react';
+import { LayoutDashboard, Trophy, Heart, LogOut, ArrowLeft } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import '../../styles/dashboard.scss';
 
