@@ -22,8 +22,8 @@ const AdminDraws: React.FC = () => {
   const [result, setResult] = useState<DrawResult | null>(null);
   const [error, setError] = useState('');
 
-  // NOTE: This assumes the Python backend is running locally on port 8080
-  const API_URL = 'http://localhost:8080/api/draw';
+  // Use the production backend URL
+  const API_URL = 'https://digital-heroes-charity.vercel.app/api/draw';
 
   const handleSimulate = async () => {
     setLoading(true);

@@ -6,6 +6,7 @@ const Overview: React.FC = () => {
   const { profile } = useAuth();
   const [totalWon, setTotalWon] = useState(0);
   const [scoresCount, setScoresCount] = useState(0);
+  const [loadingSub, setLoadingSub] = useState(false);
 
   useEffect(() => {
     if (profile) {
@@ -32,6 +33,29 @@ const Overview: React.FC = () => {
     }
   }, [profile]);
 
+  const handleToggleSubscription = async (newStatus: string) => {
+    if (!profile) return;
+    setLoadingSub(true);
+    try {
+      // Hit the Python Backend to securely toggle the subscription (Mocking a Stripe webhook response)
+      const response = await fetch('https://digital-heroes-charity.vercel.app/api/subscription/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: profile.id, status: newStatus })
+      });
+      
+      if (!response.ok) throw new Error('Failed to update subscription');
+      
+      // Force a reload to get the new AuthContext profile state
+      window.location.reload();
+    } catch (err) {
+      console.error(err);
+      alert('Error updating subscription. Make sure the Python backend is running!');
+    } finally {
+      setLoadingSub(false);
+    }
+  };
+
   return (
     <>
       <div className="page-header">
@@ -49,8 +73,23 @@ const Overview: React.FC = () => {
               </strong>
             </p>
           </div>
-          {profile?.subscription_status !== 'active' && (
-            <button className="btn-primary">Manage Subscription</button>
+          {profile?.subscription_status !== 'active' ? (
+            <button 
+              className="btn-primary" 
+              onClick={() => handleToggleSubscription('active')}
+              disabled={loadingSub}
+            >
+              {loadingSub ? 'Processing...' : 'Subscribe (Mock Stripe)'}
+            </button>
+          ) : (
+             <button 
+              className="btn-primary" 
+              style={{ background: 'transparent', border: '1px solid #f87171', color: '#f87171' }}
+              onClick={() => handleToggleSubscription('inactive')}
+              disabled={loadingSub}
+            >
+              {loadingSub ? 'Processing...' : 'Cancel Subscription'}
+            </button>
           )}
         </div>
       </div>
