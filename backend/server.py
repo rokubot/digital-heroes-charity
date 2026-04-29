@@ -141,7 +141,10 @@ cors.add(aio_app.router.add_post('/api/draw/publish', publish_draw))
 cors.add(aio_app.router.add_post('/api/subscription/toggle', toggle_subscription))
 
 # Wrap the application for Vercel (ASGI)
-app = ASGIResource(aio_app)
+app_resource = ASGIResource(aio_app)
+
+async def app(scope, receive, send):
+    await app_resource(scope, receive, send)
 
 if __name__ == '__main__':
     web.run_app(aio_app, port=8080)
