@@ -1,9 +1,10 @@
 import os
 import random
+import json
 from datetime import datetime
-from aiohttp import web
-import aiohttp_cors
-from aiohttp_asgi import ASGIResource
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -16,8 +17,15 @@ supabase: Client = None
 if url and key:
     supabase = create_client(url, key)
 
-async def handle_health(request):
-    return web.json_response({"status": "healthy"})
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def calculate_winners(winning_numbers, user_scores):
     winners = {"5-match": [], "4-match": [], "3-match": []}
@@ -31,44 +39,58 @@ def calculate_winners(winning_numbers, user_scores):
             winners["3-match"].append(user_id)
     return winners
 
-async def simulate_draw(request):
+def internal_simulate():
+    winning_numbers = random.sample(range(1, 46), 5)
+    users = supabase.table("users").select("id").eq("subscription_status", "active").execute()
+    active_count = len(users.data)
+    prize_pool = active_count * 10
+    
+    scores_resp = supabase.table("scores").select("user_id, score").execute()
+    user_scores = {}
+    for s in scores_resp.data:
+        user_scores.setdefault(s["user_id"], []).append(s["score"])
+        
+    winners = calculate_winners(winning_numbers, user_scores)
+    
+    payouts = {
+        "5-match": (prize_pool * 0.4) / max(len(winners["5-match"]), 1) if winners["5-match"] else 0,
+        "4-match": (prize_pool * 0.35) / max(len(winners["4-match"]), 1) if winners["4-match"] else 0,
+        "3-match": (prize_pool * 0.25) / max(len(winners["3-match"]), 1) if winners["3-match"] else 0
+    }
+    
+    return {
+        "winning_numbers": winning_numbers,
+        "prize_pool": prize_pool,
+        "winners_count": {k: len(v) for k, v in winners.items()},
+        "payouts_per_winner": payouts,
+        "user_scores": user_scores,
+        "winners": winners
+    }
+
+@app.get("/api/health")
+async def handle_health():
+    return JSONResponse({"status": "healthy"})
+
+@app.post("/api/draw/simulate")
+async def simulate_draw():
     try:
-        winning_numbers = random.sample(range(1, 46), 5)
-        users = supabase.table("users").select("id").eq("subscription_status", "active").execute()
-        active_count = len(users.data)
-        prize_pool = active_count * 10
-        
-        scores_resp = supabase.table("scores").select("user_id, score").execute()
-        user_scores = {}
-        for s in scores_resp.data:
-            user_scores.setdefault(s["user_id"], []).append(s["score"])
-            
-        winners = calculate_winners(winning_numbers, user_scores)
-        
-        payouts = {
-            "5-match": (prize_pool * 0.4) / max(len(winners["5-match"]), 1) if winners["5-match"] else 0,
-            "4-match": (prize_pool * 0.35) / max(len(winners["4-match"]), 1) if winners["4-match"] else 0,
-            "3-match": (prize_pool * 0.25) / max(len(winners["3-match"]), 1) if winners["3-match"] else 0
-        }
-        
-        return web.json_response({
-            "winning_numbers": winning_numbers,
-            "prize_pool": prize_pool,
-            "winners_count": {k: len(v) for k, v in winners.items()},
-            "payouts_per_winner": payouts
+        data = internal_simulate()
+        return JSONResponse({
+            "winning_numbers": data["winning_numbers"],
+            "prize_pool": data["prize_pool"],
+            "winners_count": data["winners_count"],
+            "payouts_per_winner": data["payouts_per_winner"]
         })
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-async def publish_draw(request):
+@app.post("/api/draw/publish")
+async def publish_draw():
     try:
         month = datetime.now().strftime('%Y-%m')
-        sim = await simulate_draw(request)
-        sim_data = await sim.json()
         
-        if "error" in sim_data:
-            return web.json_response(sim_data, status=500)
-            
+        sim_data = internal_simulate()
+        
         winning_numbers = sim_data["winning_numbers"]
         prize_pool = sim_data["prize_pool"]
         
@@ -82,12 +104,7 @@ async def publish_draw(request):
         
         draw_id = draw_resp.data[0]["id"]
         
-        scores_resp = supabase.table("scores").select("user_id, score").execute()
-        user_scores = {}
-        for s in scores_resp.data:
-            user_scores.setdefault(s["user_id"], []).append(s["score"])
-            
-        winners = calculate_winners(winning_numbers, user_scores)
+        winners = sim_data["winners"]
         payouts = sim_data["payouts_per_winner"]
         
         winnings_inserts = []
@@ -104,47 +121,25 @@ async def publish_draw(request):
         if winnings_inserts:
             supabase.table("winnings").insert(winnings_inserts).execute()
 
-        return web.json_response({
+        return JSONResponse({
             "message": "Draw published successfully!",
             "draw_id": draw_id,
             "total_winners": sum(len(v) for v in winners.values())
         })
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-async def toggle_subscription(request):
+@app.post("/api/subscription/toggle")
+async def toggle_subscription(request: Request):
     try:
         data = await request.json()
         user_id = data.get('user_id')
         status = data.get('status')
         
         if not user_id or not status:
-             return web.json_response({"error": "Missing user_id or status"}, status=400)
+             return JSONResponse({"error": "Missing user_id or status"}, status_code=400)
              
         response = supabase.table("users").update({"subscription_status": status}).eq("id", user_id).execute()
-        return web.json_response({"message": "Subscription updated successfully", "data": response.data})
+        return JSONResponse({"message": "Subscription updated successfully", "data": response.data})
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
-
-aio_app = web.Application()
-cors = aiohttp_cors.setup(aio_app, defaults={
-    "*": aiohttp_cors.ResourceOptions(
-        allow_credentials=True,
-        expose_headers="*",
-        allow_headers="*",
-    )
-})
-
-aio_app.router.add_get('/api/health', handle_health)
-cors.add(aio_app.router.add_post('/api/draw/simulate', simulate_draw))
-cors.add(aio_app.router.add_post('/api/draw/publish', publish_draw))
-cors.add(aio_app.router.add_post('/api/subscription/toggle', toggle_subscription))
-
-# Wrap the application for Vercel (ASGI)
-app_resource = ASGIResource(aio_app)
-
-async def app(scope, receive, send):
-    await app_resource(scope, receive, send)
-
-if __name__ == '__main__':
-    web.run_app(aio_app, port=8080)
+        return JSONResponse({"error": str(e)}, status_code=500)
