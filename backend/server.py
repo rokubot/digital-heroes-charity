@@ -3,6 +3,7 @@ import random
 from datetime import datetime
 from aiohttp import web
 import aiohttp_cors
+from aiohttp_asgi import ASGIResource
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -32,15 +33,11 @@ def calculate_winners(winning_numbers, user_scores):
 
 async def simulate_draw(request):
     try:
-        # Generate 5 random winning numbers between 1 and 45
         winning_numbers = random.sample(range(1, 46), 5)
-        
-        # Calculate pool based on active subscribers ($10 per sub for the pool)
         users = supabase.table("users").select("id").eq("subscription_status", "active").execute()
         active_count = len(users.data)
         prize_pool = active_count * 10
         
-        # Fetch all scores and group by user
         scores_resp = supabase.table("scores").select("user_id, score").execute()
         user_scores = {}
         for s in scores_resp.data:
@@ -48,7 +45,6 @@ async def simulate_draw(request):
             
         winners = calculate_winners(winning_numbers, user_scores)
         
-        # Prize pool math
         payouts = {
             "5-match": (prize_pool * 0.4) / max(len(winners["5-match"]), 1) if winners["5-match"] else 0,
             "4-match": (prize_pool * 0.35) / max(len(winners["4-match"]), 1) if winners["4-match"] else 0,
@@ -66,10 +62,7 @@ async def simulate_draw(request):
 
 async def publish_draw(request):
     try:
-        data = await request.json()
         month = datetime.now().strftime('%Y-%m')
-        
-        # 1. Simulate to get data
         sim = await simulate_draw(request)
         sim_data = await sim.json()
         
@@ -79,7 +72,6 @@ async def publish_draw(request):
         winning_numbers = sim_data["winning_numbers"]
         prize_pool = sim_data["prize_pool"]
         
-        # 2. Insert Draw
         draw_resp = supabase.table("draws").insert({
             "month": month,
             "winning_numbers": winning_numbers,
@@ -90,7 +82,6 @@ async def publish_draw(request):
         
         draw_id = draw_resp.data[0]["id"]
         
-        # 3. Recalculate winners to insert into winnings table
         scores_resp = supabase.table("scores").select("user_id, score").execute()
         user_scores = {}
         for s in scores_resp.data:
@@ -135,8 +126,8 @@ async def toggle_subscription(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
-app = web.Application()
-cors = aiohttp_cors.setup(app, defaults={
+aio_app = web.Application()
+cors = aiohttp_cors.setup(aio_app, defaults={
     "*": aiohttp_cors.ResourceOptions(
         allow_credentials=True,
         expose_headers="*",
@@ -144,10 +135,13 @@ cors = aiohttp_cors.setup(app, defaults={
     )
 })
 
-app.router.add_get('/api/health', handle_health)
-cors.add(app.router.add_post('/api/draw/simulate', simulate_draw))
-cors.add(app.router.add_post('/api/draw/publish', publish_draw))
-cors.add(app.router.add_post('/api/subscription/toggle', toggle_subscription))
+aio_app.router.add_get('/api/health', handle_health)
+cors.add(aio_app.router.add_post('/api/draw/simulate', simulate_draw))
+cors.add(aio_app.router.add_post('/api/draw/publish', publish_draw))
+cors.add(aio_app.router.add_post('/api/subscription/toggle', toggle_subscription))
+
+# Wrap the application for Vercel (ASGI)
+app = ASGIResource(aio_app)
 
 if __name__ == '__main__':
-    web.run_app(app, port=8080)
+    web.run_app(aio_app, port=8080)
